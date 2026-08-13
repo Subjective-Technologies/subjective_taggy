@@ -495,21 +495,32 @@ from datetime import datetime
 
 class TaskBubble(QWidget):
     current_filter_tag = None
+    # Balanced card body height range (text area only).
+    TEXT_MIN_H = 64
+    TEXT_MAX_H = 168
 
     def __init__(self, task, db_manager=None, font=None, parent=None):
         super().__init__(parent)
-        print("TaskBubble.__init__ called", flush=True)
         self.task = task
         self.db_manager = db_manager
-        self.taskBubbleFont = font if font is not None else QFont("Arial", 20)
+        self.taskBubbleFont = font if font is not None else QFont("Noto Sans", 13)
+        self._card_width = 320
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
         self.initUI()
         self.setupButtons()
 
+    def applyCardWidth(self, width):
+        """Lock card to a consistent grid/list width and reflow text."""
+        self._card_width = max(220, int(width))
+        self.setFixedWidth(self._card_width)
+        self.adjustTextEditHeight()
+        self._placeChromeButtons()
+
     def initUI(self):
-        print("TaskBubble.initUI called", flush=True)
         self.setAcceptDrops(True)
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(15, 15, 15, 15)
+        self.layout.setContentsMargins(12, 28, 12, 10)
+        self.layout.setSpacing(8)
         self.setLayout(self.layout)
 
         # Create a QTextEdit to display (and later edit) the task text.
@@ -518,9 +529,11 @@ class TaskBubble(QWidget):
         self.textEdit.setFont(self.taskBubbleFont)
         self.textEdit.setFrameStyle(QTextEdit.NoFrame)
         self.textEdit.setReadOnly(True)
-        self.textEdit.setStyleSheet("background: transparent; color: white; padding-top: 4%;")
+        self.textEdit.setStyleSheet(
+            "background: transparent; color: #F3F4F6; padding: 2px 2px 0 2px; border: none;"
+        )
+        self.textEdit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.layout.addWidget(self.textEdit)
-        print("TextEdit created with text:", self.task.text, flush=True)
 
         # Create a dedicated thumbnail container (for image/PDF thumbnails).
         self.thumbnailContainer = QWidget(self)
@@ -528,104 +541,108 @@ class TaskBubble(QWidget):
         self.thumbnailLayout.setContentsMargins(0, 0, 0, 0)
         self.thumbnailLayout.setSpacing(5)
         self.thumbnailContainer.setLayout(self.thumbnailLayout)
+        self.thumbnailContainer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.layout.insertWidget(1, self.thumbnailContainer)
-        print("Thumbnail container created", flush=True)
 
-        # Create the timestamp label.
-        self.timestampLabel = QLabel(self.task.timestamp if self.task.timestamp else "", self)
-        self.timestampLabel.setStyleSheet("background-color: black; color: white; font-size: 10pt; padding: 2px;")
+        # Create the timestamp label (chrome overlay).
+        ts = self.task.timestamp if self.task.timestamp else ""
+        self.timestampLabel = QLabel(ts, self)
+        self.timestampLabel.setStyleSheet(
+            "background-color: rgba(0,0,0,160); color: #D1D5DB; font-size: 9pt;"
+            "padding: 2px 6px; border-radius: 4px;"
+        )
         self.timestampLabel.setAttribute(Qt.WA_TransparentForMouseEvents)
-        print("Timestamp label created with value:", self.task.timestamp, flush=True)
+        self.timestampLabel.adjustSize()
 
         # Create a horizontal layout for tag buttons.
         self.tagLayout = QHBoxLayout()
+        self.tagLayout.setSpacing(4)
         self.tagLayout.addStretch()  # Right-align tag buttons.
         for tag in self.task.tags:
             tag_button = TagWidget(tag, db_manager=self.db_manager)
-            tag_button.setFixedHeight(tag_button.sizeHint().height())
+            tag_button.setFixedHeight(max(22, tag_button.sizeHint().height()))
             if tag.name in ["Doing", "Completed", "Note"]:
                 tag_button.deleteButton.hide()
             self.tagLayout.addWidget(tag_button)
         self.layout.addLayout(self.tagLayout)
-        print("Tag layout created with", len(self.task.tags), "tags", flush=True)
 
-        # Set the overall appearance of the bubble.
-        self.setStyleSheet("background-color: black; border: 1px solid #444444; border-radius: 10%;")
-        self.adjustSize()
+        # Compact card chrome.
+        self.setStyleSheet(
+            "TaskBubble {"
+            "  background-color: #141414;"
+            "  border: 1px solid #3F3F46;"
+            "  border-radius: 10px;"
+            "}"
+        )
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(8)
-        shadow.setColor(QColor(0, 0, 0, 160))
-        shadow.setOffset(3, 3)
+        shadow.setBlurRadius(12)
+        shadow.setColor(QColor(0, 0, 0, 140))
+        shadow.setOffset(0, 3)
         self.setGraphicsEffect(shadow)
-        self.timestampLabel.setText(self.task.timestamp if self.task.timestamp else "")
+        self.timestampLabel.setText(ts)
         self.adjustTextEditHeight()
-        print("TaskBubble.initUI completed", flush=True)
 
     def setupButtons(self):
-        print("TaskBubble.setupButtons called", flush=True)
-        # Create the delete ("×") button.
+        btn_css = """
+            QPushButton {
+                background-color: #27272A;
+                color: #E5E7EB;
+                font-weight: bold;
+                border: 1px solid #3F3F46;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #3F3F46;
+            }
+        """
         self.deleteButton = QPushButton("×", self)
-        self.deleteButton.setStyleSheet("""
-            QPushButton {
-                background-color: black;
-                color: white;
-                font-weight: bold;
-                border: none;
-            }
-        """)
-        self.deleteButton.setFixedSize(14, 14)
+        self.deleteButton.setStyleSheet(btn_css)
+        self.deleteButton.setFixedSize(20, 20)
+        self.deleteButton.setToolTip("Delete task")
         self.deleteButton.clicked.connect(self.deleteTask)
-        print("Delete button created", flush=True)
 
-        # Create the edit ("✎") button.
         self.editButton = QPushButton("✎", self)
-        self.editButton.setStyleSheet("""
-            QPushButton {
-                background-color: black;
-                color: white;
-                font-weight: bold;
-                border: none;
-            }
-        """)
-        self.editButton.setFixedSize(14, 14)
+        self.editButton.setStyleSheet(btn_css)
+        self.editButton.setFixedSize(20, 20)
+        self.editButton.setToolTip("Edit task")
         self.editButton.clicked.connect(self.startEditing)
-        print("Edit button created", flush=True)
 
-        # Create the copy ("⧉") button.
         self.copyButton = QPushButton("⧉", self)
-        self.copyButton.setStyleSheet("""
-            QPushButton {
-                background-color: black;
-                color: white;
-                font-weight: bold;
-                border: none;
-            }
-        """)
-        self.copyButton.setFixedSize(14, 14)
+        self.copyButton.setStyleSheet(btn_css)
+        self.copyButton.setFixedSize(20, 20)
+        self.copyButton.setToolTip("Copy text")
         self.copyButton.clicked.connect(lambda: QApplication.clipboard().setText(self.task.text))
-        print("Copy button created", flush=True)
+        self._placeChromeButtons()
+
+    def _placeChromeButtons(self):
+        if not hasattr(self, "deleteButton"):
+            return
+        margin = 6
+        gap = 4
+        x = self.width() - margin
+        for btn in (self.deleteButton, self.editButton, self.copyButton):
+            x -= btn.width()
+            btn.move(x, margin)
+            x -= gap
+        if hasattr(self, "timestampLabel"):
+            self.timestampLabel.adjustSize()
+            self.timestampLabel.move(margin, margin)
 
     def adjustTextEditHeight(self):
-        print("adjustTextEditHeight called", flush=True)
+        self.textEdit.document().setTextWidth(max(40, self._card_width - 28))
         self.textEdit.document().adjustSize()
-        doc_height = self.textEdit.document().size().height() + 10
+        doc_height = self.textEdit.document().size().height() + 12
         if doc_height <= 0:
             fm = self.textEdit.fontMetrics()
-            doc_height = self.textEdit.document().blockCount() * fm.lineSpacing() + 10
-        try:
-            right_pane = self.window().rightPane
-            threshold = right_pane.height() / 4
-        except Exception:
-            threshold = 200
+            doc_height = self.textEdit.document().blockCount() * fm.lineSpacing() + 12
+        threshold = self.TEXT_MAX_H
         if doc_height < threshold:
             self.textEdit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.textEdit.setFixedHeight(int(doc_height))
-            print("TextEdit height set to", int(doc_height), "with no scrollbar", flush=True)
+            self.textEdit.setFixedHeight(max(self.TEXT_MIN_H, int(doc_height)))
         else:
             self.textEdit.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             self.textEdit.setFixedHeight(int(threshold))
-            print("TextEdit height capped to", int(threshold), "with scrollbar", flush=True)
-        self.adjustSize()
+        self.updateGeometry()
 
     def startEditing(self):
         print("startEditing called", flush=True)
@@ -859,37 +876,29 @@ class TaskBubble(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Position buttons at the top-right: delete, edit, copy.
-        self.deleteButton.move(self.width() - self.deleteButton.width() - 2, 2)
-        self.editButton.move(self.width() - self.deleteButton.width() - self.editButton.width() - 4, 2)
-        self.copyButton.move(self.width() - self.deleteButton.width() - self.editButton.width() - self.copyButton.width() - 6, 2)
-        # Position timestamp label at top-left.
-        self.timestampLabel.move(2, 2)
-        ts_size = self.timestampLabel.sizeHint()
-        self.timestampLabel.resize(ts_size)
-        # Adjust textEdit's top padding.
-        top_padding = int(self.height() * 0.04)
-        self.textEdit.setStyleSheet(f"background: transparent; color: white; padding-top: {top_padding}px;")
-        if not self.textEdit.isReadOnly():
-            self.textEdit.setGeometry(self.textEdit.geometry())
+        self._placeChromeButtons()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        rect = self.rect()
-        painter.fillRect(rect, QColor("black"))
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        painter.setPen(QColor("#3F3F46"))
+        painter.setBrush(QColor("#141414"))
+        painter.drawRoundedRect(rect, 10, 10)
         super().paintEvent(event)
 
 
 class TaskListContainer(QWidget):
+    DEFAULT_BG = "#1C1C1F"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.background_pixmap = None
-        # Set the default background color to grey.
-        self.bg_color = "#808080"  
+        self.bg_color = self.DEFAULT_BG
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def setBackgroundPixmap(self, pixmap):
         self.background_pixmap = pixmap
-        # When using an image, clear any background color.
         self.bg_color = None
         self.update()
 
@@ -898,22 +907,19 @@ class TaskListContainer(QWidget):
         self.update()
 
     def setBackgroundColor(self, color):
-        # If an empty color is passed, default to grey.
-        self.bg_color = color if color and color.strip() != "" else "#808080"
+        # Empty color restores the default panel background (not mid-grey).
+        self.bg_color = color if color and color.strip() != "" else self.DEFAULT_BG
         self.background_pixmap = None
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        # If a background pixmap is set, draw it.
         if self.background_pixmap is not None:
             painter.drawPixmap(self.rect(), self.background_pixmap)
-        # Else if a background color is set, use that.
         elif self.bg_color is not None and self.bg_color.strip() != "":
             painter.fillRect(self.rect(), QColor(self.bg_color))
         else:
-            # Default to grey if nothing else is set.
-            painter.fillRect(self.rect(), QColor("#808080"))
+            painter.fillRect(self.rect(), QColor(self.DEFAULT_BG))
 
 
 
@@ -927,10 +933,14 @@ class TagFilterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.layout = QHBoxLayout()
-        self.layout.setSpacing(5)
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.layout = FlowLayout(self, margin=4, spacing=6)
         self.setLayout(self.layout)
         self.filter_tags = []  # Holds Tag objects currently used as filters
+        self._placeholder = QLabel("Drop tags here to filter")
+        self._placeholder.setStyleSheet("color: #71717A; font-size: 11px; padding: 4px;")
+        self.layout.addWidget(self._placeholder)
 
     class FilterTagButton(QPushButton):
         def __init__(self, tag, parent=None):
@@ -990,12 +1000,24 @@ class TagFilterWidget(QWidget):
                 parent.removeFilterTag(self.tag)
             self.deleteLater()
 
+    def _rebuildFilterButtons(self):
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        if not self.filter_tags:
+            self._placeholder = QLabel("Drop tags here to filter")
+            self._placeholder.setStyleSheet("color: #71717A; font-size: 11px; padding: 4px;")
+            self.layout.addWidget(self._placeholder)
+            return
+        for t in self.filter_tags:
+            button = TagFilterWidget.FilterTagButton(t, parent=self)
+            self.layout.addWidget(button)
+
     def addFilterTag(self, tag):
         if tag not in self.filter_tags:
             self.filter_tags.append(tag)
-            button = TagFilterWidget.FilterTagButton(tag, parent=self)
-            self.layout.addWidget(button)
-            # Optionally update the main UI.
+            self._rebuildFilterButtons()
             main_window = self.window()
             if hasattr(main_window, "updateTaskList"):
                 main_window.updateTaskList()
@@ -1003,25 +1025,14 @@ class TagFilterWidget(QWidget):
     def removeFilterTag(self, tag):
         if tag in self.filter_tags:
             self.filter_tags.remove(tag)
-        # Clear the layout and re-add remaining filter tag buttons.
-        for i in reversed(range(self.layout.count())):
-            widget = self.layout.itemAt(i).widget()
-            if widget is not None:
-                widget.setParent(None)
-        for t in self.filter_tags:
-            button = TagFilterWidget.FilterTagButton(t, parent=self)
-            self.layout.addWidget(button)
-        # Optionally update the main UI.
+        self._rebuildFilterButtons()
         main_window = self.window()
         if hasattr(main_window, "updateTaskList"):
             main_window.updateTaskList()
 
     def clearFilters(self):
         self.filter_tags = []
-        while self.layout.count():
-            item = self.layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self._rebuildFilterButtons()
         main_window = self.window()
         if hasattr(main_window, "updateTaskList"):
             main_window.updateTaskList()
@@ -1057,80 +1068,106 @@ class TagFilterWidget(QWidget):
 
 
 class TaskListWidget(QScrollArea):
+    # Preferred card width for auto grid columns (px).
+    GRID_MIN_CARD = 300
+    GRID_GAP = 14
+    LIST_MAX_FRAC = 0.72
+
     def __init__(self, db_manager=None, parent=None):
         super().__init__(parent)
         self.db_manager = db_manager
-        self.layout_mode = "List"  # default mode
-        # Create an initial container with the "List" layout.
+        self.layout_mode = "Grid"  # default: grid mode
+        self._last_tasks = []
+        self._last_font = None
+        self._resize_refresh_pending = False
+        self.setFrameShape(QScrollArea.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.container = TaskListContainer()
         self.setLayoutMode(self.layout_mode)
         self.setWidget(self.container)
         self.setWidgetResizable(True)
 
+    def gridColumnCount(self):
+        vp_w = max(self.viewport().width(), self.GRID_MIN_CARD)
+        cols = max(1, vp_w // (self.GRID_MIN_CARD + self.GRID_GAP))
+        return min(cols, 6)
+
+    def cardWidthForMode(self):
+        vp_w = max(self.viewport().width(), 200)
+        if self.layout_mode == "Grid":
+            cols = self.gridColumnCount()
+            usable = vp_w - self.GRID_GAP * (cols + 1)
+            return max(240, usable // cols)
+        return max(320, int(vp_w * self.LIST_MAX_FRAC))
+
     def setLayoutMode(self, mode):
         self.layout_mode = mode
-        # Instead of trying to remove the existing layout,
-        # create a new container widget with the desired layout.
         new_container = TaskListContainer()
-        if mode == "List":
-            new_layout = QVBoxLayout()
-            new_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-            new_layout.setSpacing(30)
-        elif mode == "Grid":
+        if mode == "Grid":
             new_layout = QGridLayout()
-            new_layout.setSpacing(30)
+            new_layout.setSpacing(self.GRID_GAP)
+            new_layout.setContentsMargins(12, 12, 12, 12)
+            new_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         else:
             new_layout = QVBoxLayout()
             new_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-            new_layout.setSpacing(30)
+            new_layout.setSpacing(self.GRID_GAP)
+            new_layout.setContentsMargins(16, 12, 16, 12)
         new_container.setLayout(new_layout)
-        # Replace the old container.
-        # Note: We call deleteLater() on the old container to free it safely.
         self.container.deleteLater()
         self.container = new_container
         self.setWidget(self.container)
 
     def refreshTasks(self, tasks, font):
+        self._last_tasks = list(tasks)
+        self._last_font = font
         layout = self.container.layout()
-        # Clear existing task bubbles.
         while layout.count():
             item = layout.takeAt(0)
             if item and item.widget():
                 item.widget().deleteLater()
-        if self.layout_mode == "List":
-            for task in tasks:
-                bubble = TaskBubble(task, db_manager=self.db_manager, font=font)
-                bubble.setMaximumWidth(int(self.viewport().width() * 0.8))
-                layout.addWidget(bubble)
-        elif self.layout_mode == "Grid":
-            grid_layout = layout  # this is a QGridLayout
-            col_count = 2  # fixed two columns for grid mode
+
+        card_w = self.cardWidthForMode()
+        if self.layout_mode == "Grid":
+            grid_layout = layout
+            col_count = self.gridColumnCount()
+            for c in range(col_count):
+                grid_layout.setColumnStretch(c, 1)
             row = 0
             col = 0
             for task in tasks:
                 bubble = TaskBubble(task, db_manager=self.db_manager, font=font)
-                bubble.setMaximumWidth(int(self.viewport().width() * 0.45))
-                grid_layout.addWidget(bubble, row, col)
+                bubble.applyCardWidth(card_w)
+                grid_layout.addWidget(bubble, row, col, Qt.AlignTop)
                 col += 1
                 if col >= col_count:
                     col = 0
                     row += 1
+            # Keep rows packed at the top (no vertical stretch of empty space).
+            grid_layout.setRowStretch(row + 1, 1)
         else:
             for task in tasks:
                 bubble = TaskBubble(task, db_manager=self.db_manager, font=font)
-                bubble.setMaximumWidth(int(self.viewport().width() * 0.8))
-                layout.addWidget(bubble)
+                bubble.applyCardWidth(card_w)
+                layout.addWidget(bubble, 0, Qt.AlignHCenter | Qt.AlignTop)
+            layout.addStretch(1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        layout = self.container.layout()
-        for i in range(layout.count()):
-            widget = layout.itemAt(i).widget()
-            if widget:
-                if self.layout_mode == "List":
-                    widget.setMaximumWidth(int(self.viewport().width() * 0.8))
-                elif self.layout_mode == "Grid":
-                    widget.setMaximumWidth(int(self.viewport().width() * 0.45))
+        # Debounce reflow so continuous resize doesn't thrash the UI.
+        if self._resize_refresh_pending:
+            return
+        self._resize_refresh_pending = True
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(80, self._onResizeSettle)
+
+    def _onResizeSettle(self):
+        self._resize_refresh_pending = False
+        if self._last_font is None:
+            return
+        # Only reflow grid when column count would change; always update card widths.
+        self.refreshTasks(self._last_tasks, self._last_font)
 
 
 
@@ -1142,9 +1179,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Taggy Todo")
-        self.resize(800, 600)
-        # Set the default font for task bubbles to 20pt (applies only to task bubbles)
-        self.taskBubbleFont = QFont("Arial", 20)
+        self.resize(1280, 800)
+        # Readable default for dense grid cards
+        self.taskBubbleFont = QFont("Noto Sans", 13)
         # Default ordering: True means newest first, False means oldest first.
         self.orderNewestFirst = True
         # Initialize the default database (todos.db in the user's home folder)
@@ -1159,12 +1196,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready to accept tasks and tags.")
 
         toolbar = self.addToolBar("File")
+        toolbar.setMovable(False)
         openButton = QPushButton("Open")
         openButton.clicked.connect(self.openDatabase)
         toolbar.addWidget(openButton)
 
         # Font family control for task bubbles.
         self.fontCombo = QFontComboBox()
+        self.fontCombo.setCurrentFont(self.taskBubbleFont)
         self.fontCombo.currentFontChanged.connect(self.changeTaskBubbleFont)
         toolbar.addWidget(self.fontCombo)
 
@@ -1172,7 +1211,7 @@ class MainWindow(QMainWindow):
         self.fontSizeSpin = QSpinBox()
         self.fontSizeSpin.setMinimum(8)
         self.fontSizeSpin.setMaximum(72)
-        self.fontSizeSpin.setValue(20)
+        self.fontSizeSpin.setValue(13)
         self.fontSizeSpin.valueChanged.connect(self.changeTaskBubbleFont)
         toolbar.addWidget(self.fontSizeSpin)
 
@@ -1188,12 +1227,25 @@ class MainWindow(QMainWindow):
         self.darkModeButton.setChecked(True)
         self.darkModeButton.clicked.connect(self.toggleDarkMode)
         toolbar.addWidget(self.darkModeButton)
+
+        # Default view: Grid
+        self.layoutCombo = QComboBox()
+        self.layoutCombo.addItem("Grid")
+        self.layoutCombo.addItem("List")
+        self.layoutCombo.setCurrentText("Grid")
+        self.layoutCombo.currentTextChanged.connect(self.changeTaskLayout)
+        toolbar.addWidget(self.layoutCombo)
+
         self.toggleDarkMode()  # Apply dark mode by default
 
         centralWidget = QWidget()
         self.setCentralWidget(centralWidget)
         mainLayout = QHBoxLayout(centralWidget)
+        mainLayout.setContentsMargins(8, 8, 8, 8)
+        mainLayout.setSpacing(0)
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(6)
         mainLayout.addWidget(self.splitter)
 
         self.leftPane = self.createLeftPane()
@@ -1201,17 +1253,10 @@ class MainWindow(QMainWindow):
         self.rightPane = self.createRightPane()
         self.splitter.addWidget(self.rightPane)
 
-        # Set left pane initial width to 1/10th of the screen width.
-        screen_rect = QApplication.desktop().screenGeometry()
-        initial_left = screen_rect.width() // 10
-        self.splitter.setSizes([initial_left, self.width() - initial_left])
-
-        # ... inside MainWindow.initUI, after adding the font size spinbox:
-        self.layoutCombo = QComboBox()
-        self.layoutCombo.addItem("List")
-        self.layoutCombo.addItem("Grid")
-        self.layoutCombo.currentTextChanged.connect(self.changeTaskLayout)
-        toolbar.addWidget(self.layoutCombo)
+        # Sidebar ~280px; tasks take the rest.
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([300, max(900, self.width() - 300)])
 
 
     def changeTaskBubbleFont(self):
@@ -1227,50 +1272,82 @@ class MainWindow(QMainWindow):
 
     def createLeftPane(self):
         leftWidget = QWidget()
+        leftWidget.setObjectName("leftPane")
         layout = QVBoxLayout(leftWidget)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        section_css = (
+            "background-color: #121214; border: 1px solid #3F3F46;"
+            "border-radius: 8px; padding: 6px;"
+        )
+        label_css = "color: #A1A1AA; font-size: 11px; font-weight: 600; padding: 2px 0;"
 
         # Tag search field.
         self.tagSearchField = QLineEdit()
         self.tagSearchField.setPlaceholderText("Search Tags")
+        self.tagSearchField.setClearButtonEnabled(True)
         self.tagSearchField.textChanged.connect(self.updateTagList)
         layout.addWidget(self.tagSearchField)
 
-        # Container for the "All Tags" list.
-        tagListContainer = QWidget()
-        tagListContainer.setStyleSheet("background-color: black; border: 1px solid #444444; padding: 5px;")
-        self.flowLayout = FlowLayout(tagListContainer, margin=0, spacing=5)
-        tagListContainer.setLayout(self.flowLayout)
-        layout.addWidget(tagListContainer)
+        tags_label = QLabel("All Tags")
+        tags_label.setStyleSheet(label_css)
+        layout.addWidget(tags_label)
 
-        # Container for the Filter Tags list.
+        # Scrollable tags list — this is the expanding section.
+        tagListContainer = QWidget()
+        tagListContainer.setStyleSheet(section_css)
+        self.flowLayout = FlowLayout(tagListContainer, margin=4, spacing=6)
+        tagListContainer.setLayout(self.flowLayout)
+        tagScroll = QScrollArea()
+        tagScroll.setWidgetResizable(True)
+        tagScroll.setFrameShape(QScrollArea.NoFrame)
+        tagScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        tagScroll.setWidget(tagListContainer)
+        tagScroll.setMinimumHeight(120)
+        layout.addWidget(tagScroll, stretch=4)
+
+        filter_label = QLabel("Filter Tags (drop tags here)")
+        filter_label.setStyleSheet(label_css)
+        layout.addWidget(filter_label)
+
+        # Compact filter drop zone — does not steal vertical space.
         filterContainer = QWidget()
-        filterContainer.setStyleSheet("background-color: black; border: 1px solid #444444; padding: 5px;")
-        self.tagFilterWidget = TagFilterWidget(filterContainer)
+        filterContainer.setStyleSheet(section_css)
+        filterContainer.setMaximumHeight(110)
+        filterContainer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         filterLayout = QVBoxLayout(filterContainer)
-        filterLayout.setContentsMargins(0, 0, 0, 0)
+        filterLayout.setContentsMargins(4, 4, 4, 4)
+        filterLayout.setSpacing(4)
+        self.tagFilterWidget = TagFilterWidget(filterContainer)
         filterLayout.addWidget(self.tagFilterWidget)
-        # Add a horizontal layout for the sort label and checkbox.
         sortLayout = QHBoxLayout()
-        sortLabel = QLabel("Sort by:")
-        sortLabel.setStyleSheet("color: white;")
+        sortLabel = QLabel("Sort:")
+        sortLabel.setStyleSheet("color: #A1A1AA;")
         sortLayout.addWidget(sortLabel)
-        self.orderCheckBox = QCheckBox("Last First")
+        self.orderCheckBox = QCheckBox("Newest first")
         self.orderCheckBox.setChecked(True)
         self.orderCheckBox.stateChanged.connect(lambda _: self.updateTaskList())
         sortLayout.addWidget(self.orderCheckBox)
         sortLayout.addStretch()
         filterLayout.addLayout(sortLayout)
-        layout.addWidget(QLabel("Filter Tags:"))
-        layout.addWidget(filterContainer)
+        layout.addWidget(filterContainer, stretch=0)
 
-        # Container for the Status Tags list.
+        status_label = QLabel("Task Status Tags")
+        status_label.setStyleSheet(label_css)
+        layout.addWidget(status_label)
+
+        # Status tags: fixed compact row.
         statusContainer = QWidget()
-        statusContainer.setStyleSheet("background-color: black; border: 1px solid #444444; padding: 5px;")
+        statusContainer.setStyleSheet(section_css)
+        statusContainer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        statusContainer.setFixedHeight(52)
         self.statusTagLayout = QHBoxLayout(statusContainer)
+        self.statusTagLayout.setContentsMargins(8, 6, 8, 6)
+        self.statusTagLayout.setSpacing(8)
+        self.statusTagLayout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         statusContainer.setLayout(self.statusTagLayout)
-        layout.addWidget(QLabel("Task Status Tags:"))
-        layout.addWidget(statusContainer)
+        layout.addWidget(statusContainer, stretch=0)
 
         # Populate Status Tags.
         existing_tags = self.db_manager.getTags()
@@ -1289,24 +1366,26 @@ class MainWindow(QMainWindow):
             if tag.name in ["Doing", "Completed"]:
                 btn.deleteButton.hide()
             self.statusTagLayout.addWidget(btn)
+        self.statusTagLayout.addStretch()
 
-        # Container for New Tag Input.
-        # Use a horizontal layout so that the QLineEdit and Add Tag button fit on one line.
+        # New Tag Input — pinned bottom.
         newTagContainer = QWidget()
         newTagLayout = QHBoxLayout(newTagContainer)
-        newTagLayout.setContentsMargins(0, 5, 0, 5)
+        newTagLayout.setContentsMargins(0, 4, 0, 0)
+        newTagLayout.setSpacing(6)
         self.newTagField = QLineEdit()
         self.newTagField.setPlaceholderText("Add New Tag")
         self.newTagField.returnPressed.connect(self.addNewTag)
-        newTagLayout.addWidget(self.newTagField)
+        newTagLayout.addWidget(self.newTagField, stretch=1)
         addTagButton = QPushButton("Add Tag")
+        addTagButton.setFixedWidth(80)
         addTagButton.clicked.connect(self.addNewTag)
         newTagLayout.addWidget(addTagButton)
-        layout.addWidget(newTagContainer)
+        layout.addWidget(newTagContainer, stretch=0)
 
         self.updateTagList()
-        screen_rect = QApplication.desktop().screenGeometry()
-        leftWidget.setMinimumWidth(screen_rect.width() // 12)
+        leftWidget.setMinimumWidth(260)
+        leftWidget.setMaximumWidth(420)
         return leftWidget
 
 
@@ -1326,55 +1405,60 @@ class MainWindow(QMainWindow):
     def createRightPane(self):
         rightWidget = QWidget()
         layout = QVBoxLayout(rightWidget)
-        
+        layout.setContentsMargins(4, 0, 4, 4)
+        layout.setSpacing(8)
+
         # Task search field.
         self.taskSearchField = QLineEdit()
         self.taskSearchField.setPlaceholderText("Search Tasks")
+        self.taskSearchField.setClearButtonEnabled(True)
         self.taskSearchField.textChanged.connect(self.updateTaskList)
         layout.addWidget(self.taskSearchField)
-        
-        # Create a vertical splitter for task list and the new task input area.
-        verticalSplitter = QSplitter(Qt.Vertical)
-        
-        # Top widget: Task list.
+
+        # Task list takes almost all vertical space (no 50/50 split).
         self.taskListWidget = TaskListWidget(db_manager=self.db_manager)
-        verticalSplitter.addWidget(self.taskListWidget)
-        
-        # Bottom widget: New Task Input Area.
+        self.taskListWidget.setLayoutMode("Grid")
+        layout.addWidget(self.taskListWidget, stretch=1)
+
+        # Compact composer bar at the bottom.
         newTaskContainer = QWidget()
+        newTaskContainer.setObjectName("newTaskBar")
+        newTaskContainer.setStyleSheet(
+            "#newTaskBar { background-color: #121214; border: 1px solid #3F3F46;"
+            "border-radius: 10px; }"
+        )
+        newTaskContainer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         newTaskLayout = QHBoxLayout(newTaskContainer)
-        newTaskLayout.setContentsMargins(0, 5, 0, 0)  # 5px top padding
-        newTaskLayout.setSpacing(5)
-        
-        # Create the multi-line custom text area.
+        newTaskLayout.setContentsMargins(10, 8, 10, 8)
+        newTaskLayout.setSpacing(8)
+
         self.newTaskTextArea = TaskInputTextEdit()
-        self.newTaskTextArea.setPlaceholderText("Create new task")
+        self.newTaskTextArea.setPlaceholderText("Create new task  (Enter to add · Shift+Enter for newline)")
         self.newTaskTextArea.setFont(self.taskBubbleFont)
         line_spacing = self.newTaskTextArea.fontMetrics().lineSpacing()
-        default_text_area_height = line_spacing * 3 + 4
+        default_text_area_height = line_spacing * 3 + 10
         self.newTaskTextArea.setFixedHeight(default_text_area_height)
-        # Set horizontal policy to fixed; the width will be set via resize event.
-        self.newTaskTextArea.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # Connect the custom submit signal to addNewTask.
+        self.newTaskTextArea.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.newTaskTextArea.setStyleSheet(
+            "QTextEdit { background: #1C1C1F; border: 1px solid #3F3F46;"
+            "border-radius: 6px; padding: 6px; color: #F3F4F6; }"
+        )
         self.newTaskTextArea.submitSignal.connect(self.addNewTask)
-        newTaskLayout.addWidget(self.newTaskTextArea)
-        
-        # Create a square "New Task" button.
+        newTaskLayout.addWidget(self.newTaskTextArea, stretch=1)
+
         self.sendTaskButton = QPushButton("New Task")
-        self.sendTaskButton.setFixedSize(default_text_area_height, default_text_area_height)
+        self.sendTaskButton.setMinimumWidth(96)
+        self.sendTaskButton.setFixedHeight(default_text_area_height)
+        self.sendTaskButton.setStyleSheet(
+            "QPushButton { background: #4F46E5; color: white; font-weight: 600;"
+            "border: none; border-radius: 6px; padding: 0 14px; }"
+            "QPushButton:hover { background: #6366F1; }"
+            "QPushButton:pressed { background: #4338CA; }"
+        )
         self.sendTaskButton.clicked.connect(self.addNewTask)
-        newTaskLayout.addWidget(self.sendTaskButton)
-        
-        verticalSplitter.addWidget(newTaskContainer)
-        
-        # Override the rightWidget's resizeEvent to set the text area's width to 60% of the right pane.
-        def rightResizeEvent(event):
-            new_width = int(rightWidget.width() * 0.6)
-            self.newTaskTextArea.setFixedWidth(new_width)
-            event.accept()
-        rightWidget.resizeEvent = rightResizeEvent
-        
-        layout.addWidget(verticalSplitter)
+        newTaskLayout.addWidget(self.sendTaskButton, stretch=0)
+
+        layout.addWidget(newTaskContainer, stretch=0)
         self.updateTaskList()
         return rightWidget
 
@@ -1453,22 +1537,70 @@ class MainWindow(QMainWindow):
     def toggleDarkMode(self):
         if self.darkModeButton.isChecked():
             dark_style = """
-            QWidget {
-                background-color: #2E2E2E;
-                color: #FFFFFF;
+            QMainWindow, QWidget {
+                background-color: #18181B;
+                color: #F4F4F5;
             }
-            QLineEdit, QTextEdit {
-                background-color: #3E3E3E;
-                color: #FFFFFF;
+            QToolBar {
+                background-color: #18181B;
+                border-bottom: 1px solid #27272A;
+                spacing: 8px;
+                padding: 4px;
+            }
+            QStatusBar {
+                background-color: #18181B;
+                color: #A1A1AA;
+            }
+            QLineEdit, QTextEdit, QSpinBox, QComboBox, QFontComboBox {
+                background-color: #27272A;
+                color: #F4F4F5;
+                border: 1px solid #3F3F46;
+                border-radius: 6px;
+                padding: 4px 8px;
+                selection-background-color: #4F46E5;
             }
             QPushButton {
-                background-color: #4E4E4E;
-                color: #FFFFFF;
+                background-color: #27272A;
+                color: #F4F4F5;
+                border: 1px solid #3F3F46;
+                border-radius: 6px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #3F3F46;
+            }
+            QPushButton:checked {
+                background-color: #3F3F46;
+                border-color: #6366F1;
+            }
+            QCheckBox {
+                color: #E4E4E7;
+                spacing: 6px;
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QSplitter::handle {
+                background: #27272A;
+            }
+            QScrollBar:vertical {
+                background: #18181B;
+                width: 10px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #3F3F46;
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
             }
             QToolTip {
-                background-color: #2E2E2E;
-                color: #FFFFFF;
-                border: 1px solid #FFFFFF;
+                background-color: #27272A;
+                color: #F4F4F5;
+                border: 1px solid #52525B;
             }
             """
             QApplication.instance().setStyleSheet(dark_style)
